@@ -574,6 +574,7 @@ properties:
     db_encryption_key: {{ secret }}
     default_running_security_groups: [public_networks, dns]
     default_staging_security_groups: [public_networks, dns]
+    default_to_diego_backend: true
     install_buildpacks:
     - {name: java_buildpack, package: buildpack_java}
     - {name: ruby_buildpack, package: buildpack_ruby}
