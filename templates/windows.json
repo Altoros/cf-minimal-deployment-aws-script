@@ -1,0 +1,247 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Parameters": {
+    "SecurityGroup": {
+      "Description": "Security group ID to use for the Windows cells",
+      "Type": "AWS::EC2::SecurityGroup::Id"
+    },
+    "BoshUserName": {
+      "Description": "Username for bosh director.",
+      "Type": "String"
+    },
+    "BoshPassword": {
+      "Description": "Pasword for bosh director.",
+      "Type": "String",
+      "NoEcho": "true"
+    },
+    "BoshHost": {
+      "Description": "Bosh director (e.g. 127.0.0.1).",
+      "Type": "String"
+    },
+    "ContainerizerPassword": {
+      "Description": "Password for containerizer user e.g. password123!",
+      "Type": "String",
+      "NoEcho": "true"
+    },
+    "CellName": {
+      "Description": "The name for your cell",
+      "Type": "String",
+      "Default": "windows_cell"
+    },
+    "Subnetid": {
+      "Description": "Id of subnet to use",
+      "Type": "AWS::EC2::Subnet::Id",
+      "ConstraintDescription": "must be the id of existing subnet."
+    },
+    "DesiredCapacity": {
+      "Description": "The number of Windows cells to deploy",
+      "Type": "Number"
+    },
+    "VPCID": {
+      "Description": "The vpc in which the cell and subnet will be created",
+      "Type": "AWS::EC2::VPC::Id"
+    },
+    "ZZZGenerateUrl": {
+      "Description": "URL of generate.exe",
+      "Type": "String",
+      "Default": "https://github.com/cloudfoundry-incubator/diego-windows-release/releases/download/v0.51/generate.exe"
+    },
+    "ZZZDiegoWindowsMsiUrl": {
+      "Description": "URL of the DiegoWindows.msi to install",
+      "Type": "String",
+      "Default": "https://github.com/cloudfoundry-incubator/diego-windows-release/releases/download/v0.51/DiegoWindows.msi"
+    },
+    "ZZZGardenWindowsMsiUrl": {
+      "Description": "URL of the GardenWindows.msi to install",
+      "Type": "String",
+      "Default": "https://github.com/cloudfoundry-incubator/garden-windows-release/releases/download/v0.20/GardenWindows.msi"
+    },
+    "ZZZSetupPs1Url": {
+      "Description": "URL of the setup.ps1 to run",
+      "Type": "String",
+      "Default": "https://github.com/cloudfoundry-incubator/garden-windows-release/releases/download/v0.20/setup.ps1"
+    }
+  },
+  "Resources": {
+    "GardenWindowsInstanceConfiguration": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Metadata": {
+        "AWS::CloudFormation::Init": {
+          "config": {
+            "files": {
+              "C:\\tmp\\dwminst\\init.bat": {
+                "content": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "net user containerizer ",
+                      {
+                        "Ref": "ContainerizerPassword"
+                      },
+                      " /ADD",
+                      "\n",
+                      "net localgroup administrators containerizer /ADD",
+                      "\n",
+                      "C:\\tmp\\dwminst\\generate.exe",
+                      " -boshUrl=https://",
+                      {
+                        "Ref": "BoshUserName"
+                      },
+                      ":",
+                      {
+                        "Ref": "BoshPassword"
+                      },
+                      "@",
+                      {
+                        "Ref": "BoshHost"
+                      },
+                      ":25555",
+                      " -outputDir=C:\\tmp\\dwminst",
+                      " -windowsUsername=containerizer",
+                      " -windowsPassword=",
+                      {
+                        "Ref": "ContainerizerPassword"
+                      },
+                      "\n",
+                      "PowerShell.exe -ExecutionPolicy Unrestricted C:\\tmp\\dwminst\\setup.ps1",
+                      "\n",
+                      "C:\\tmp\\dwminst\\install.bat",
+                      "\n"
+                    ]
+                  ]
+                }
+              },
+              "C:\\tmp\\dwminst\\generate.exe": {
+                "source": {
+                  "Ref": "ZZZGenerateUrl"
+                }
+              },
+              "C:\\tmp\\dwminst\\GardenWindows.msi": {
+                "source": {
+                  "Ref": "ZZZGardenWindowsMsiUrl"
+                }
+              },
+              "C:\\tmp\\dwminst\\DiegoWindows.msi": {
+                "source": {
+                  "Ref": "ZZZDiegoWindowsMsiUrl"
+                }
+              },
+              "C:\\tmp\\dwminst\\setup.ps1": {
+                "source": {
+                  "Ref": "ZZZSetupPs1Url"
+                }
+              }
+            },
+            "commands": {
+              "1-init": {
+                "command": "c:\\tmp\\dwminst\\init.bat > c:\\tmp\\dwminst\\debug-stdout.log 2> c:\\tmp\\dwminst\\debug-stderr.log"
+              },
+              "2-cleanup": {
+                "command": "rd /s /q c:\\tmp\\dwminst"
+              }
+            },
+            "services": {
+              "windows": {
+                "ContainerizerService": {
+                  "ensureRunning": "true"
+                },
+                "GardenWindowsService": {
+                  "ensureRunning": "true"
+                },
+                "RepService": {
+                  "ensureRunning": "true"
+                },
+                "MetronService": {
+                  "ensureRunning": "true"
+                },
+                "ConsulService": {
+                  "ensureRunning": "true"
+                }
+              }
+            }
+          }
+        }
+      },
+      "Properties": {
+        "ImageId": "ami-c9cea0ac",
+        "InstanceType": "r3.xlarge",
+        "InstanceMonitoring": "false",
+        "SecurityGroups": [
+          {
+            "Ref": "SecurityGroup"
+          }
+        ],
+        "KeyName": "bosh-prysmakou-201510",
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "<script>\n",
+                "cfn-init.exe -v -s ",
+                {
+                  "Ref": "AWS::StackId"
+                },
+                " -r GardenWindowsInstanceConfiguration",
+                "\n",
+                "cfn-signal.exe -e %ERRORLEVEL% ",
+                {
+                  "Fn::Base64": {
+                    "Ref": "DWMWaitHandle"
+                  }
+                },
+                "\n",
+                "</script>"
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "DWMWaitHandle": {
+      "Type": "AWS::CloudFormation::WaitConditionHandle"
+    },
+    "DWMWaitCondition": {
+      "Type": "AWS::CloudFormation::WaitCondition",
+      "DependsOn": "GardenWindowsInstanceConfiguration",
+      "Properties": {
+        "Handle": {
+          "Ref": "DWMWaitHandle"
+        },
+        "Timeout": "3600",
+        "Count": {
+          "Ref": "DesiredCapacity"
+        }
+      }
+    },
+    "GardenWindowsAutoScalingGroup": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Version": "2009-05-15",
+      "Properties": {
+        "VPCZoneIdentifier": [
+          {
+            "Ref": "Subnetid"
+          }
+        ],
+        "LaunchConfigurationName": {
+          "Ref": "GardenWindowsInstanceConfiguration"
+        },
+        "MinSize": "1",
+        "MaxSize": {
+          "Ref": "DesiredCapacity"
+        },
+        "DesiredCapacity": {
+          "Ref": "DesiredCapacity"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "windows_cell",
+            "PropagateAtLaunch": "true"
+          }
+        ]
+      }
+    }
+  },
+  "Description": "Windows cell"
+}

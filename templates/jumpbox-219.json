@@ -1,0 +1,547 @@
+{
+    "AWSTemplateFormatVersion" : "2010-09-09",
+
+    "Description": "Bosh jumpbox",
+
+    "Parameters" : {
+
+      "awsAccessKeyId" : {
+        "Description" : "AWS_ACCESS_KEY_ID to use with bosh-init",
+        "Type" : "String",
+        "NoEcho": "true"
+      },
+
+      "awsSecretAccessKey" : {
+        "Description" : "AWS_SECRET_ACCESS_KEY to use with bosh-init",
+        "Type" : "String",
+        "NoEcho": "true"
+      },
+
+      "deployDiego" : {
+        "Description" : "To deploy Diego or not",
+        "Type" : "String",
+        "Default": "yes"
+      },
+
+      "bucketName" : {
+        "Description" : "Name of bucket to use",
+        "Type" : "String"
+      },
+
+      "secret" : {
+        "Description" : "Password",
+        "Type" : "String"
+      },
+
+      "cfRelease" : {
+        "Description" : "Number of release to use",
+        "Type" : "String"
+      },
+
+      "jbrelease" : {
+        "Description" : "The way to control update",
+        "Type" : "String",
+        "Default" : "1"
+      },
+
+      "KeyName" : {
+        "Description" : "Name of an existing EC2 KeyPair (find or create here: https://console.aws.amazon.com/ec2/v2/home#KeyPairs: )",
+        "Type" : "String",
+        "MinLength": "1",
+        "MaxLength": "64",
+        "AllowedPattern" : "[-_ a-zA-Z0-9]*",
+        "ConstraintDescription" : "can contain only alphanumeric characters, spaces, dashes and underscores."
+      },
+
+      "jumpBoxSGId" : {
+        "Description": "Id of jumpbox SG",
+        "Type": "AWS::EC2::SecurityGroup::Id",
+        "ConstraintDescription": "must be the id of existing SG"
+      },
+
+      "boshSGId" : {
+        "Description": "Id of bosh SG",
+        "Type": "AWS::EC2::SecurityGroup::Id",
+        "ConstraintDescription": "must be the id of existing SG"
+      },
+
+      "boshSubnetid": {
+        "Description": "Id of bosh subnet",
+        "Type": "AWS::EC2::Subnet::Id",
+        "ConstraintDescription": "must be the id of existing subnet."
+      },
+
+      "CFSubnetid": {
+        "Description": "Id of CF subnet",
+        "Type": "AWS::EC2::Subnet::Id",
+        "ConstraintDescription": "must be the id of existing subnet."
+      },
+
+      "boshAZ": {
+        "Description": "Id of bosh subnet",
+        "Type": "AWS::EC2::AvailabilityZone::Name",
+        "ConstraintDescription": "must be the name of existing AZ."
+      }
+
+    },
+
+    "Conditions" : {
+      "CreateProdResources" : {"Fn::Equals" : [{"Ref" : "deployDiego"}, "yes"]}
+    },
+
+    "Mappings" : {
+
+      "CfReleasesMap" : {
+        "217"      : {"stemcell": "3026", "bosh": "201", "diego": "0.1428.0", "gardenLinux": "0.303.0"},
+        "218"      : {"stemcell": "3026", "bosh": "201", "diego": "0.1430.0", "gardenLinux": "0.305.0"},
+        "219"      : {"stemcell": "3026", "bosh": "201", "diego": "0.1434.0", "gardenLinux": "0.307.0"},
+        "221"      : {"stemcell": "3026", "bosh": "201", "diego": "0.1436.0", "gardenLinux": "0.308.0", "etcd": "15"}
+      },
+
+      "NatRegionMap" : {
+        "us-east-1"      : { "AMI" : "ami-d05e75b8" }
+      }
+    },
+
+    "Resources" : {
+
+      "InstanceRole":{
+           "Type":"AWS::IAM::Role",
+           "Properties":{
+              "AssumeRolePolicyDocument":{
+                 "Statement":[{ "Effect": "Allow", "Principal":{ "Service":[ "ec2.amazonaws.com" ] }, "Action":[ "sts:AssumeRole" ] }]
+              },
+              "Path":"/"
+           }
+        },
+
+        "RolePolicies":{
+           "Type":"AWS::IAM::Policy",
+           "Properties":{
+              "PolicyName":"S3Download",
+              "PolicyDocument":{
+                 "Statement":[{ "Action":[ "s3:GetObject" ], "Effect":"Allow", "Resource": { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref":"bucketName" }, "/*"]] }  }]
+              },
+              "Roles":[{ "Ref":"InstanceRole" }]
+           }
+        },
+
+        "InstanceProfile":{
+           "Type":"AWS::IAM::InstanceProfile",
+           "Properties":{
+              "Path":"/",
+              "Roles":[{ "Ref":"InstanceRole" }]
+           }
+        },
+
+      "boshEIP": {
+        "Type" : "AWS::EC2::EIP",
+        "Properties" : {  "Domain" : "vpc" }
+      },
+
+      "CFEIP": {
+        "Type" : "AWS::EC2::EIP",
+        "Properties" : {  "Domain" : "vpc" }
+      },
+
+      "jumpbox" : {
+        "Type" : "AWS::EC2::Instance",
+        "Metadata" : {
+
+          "AWS::CloudFormation::Authentication":{
+             "S3AccessCreds":{
+                "type": "S3",
+                "roleName":{ "Ref":"InstanceRole" },
+                "buckets" : [{ "Ref": "bucketName"}]
+             }
+          },
+
+          "AWS::CloudFormation::Init" : {
+
+            "Metadata" : {
+              "release" : { "Ref": "jbrelease"}
+            },
+
+            "configSets" : {
+              "install_jumpbox" : [
+                "install_cfn_hup", "install_ruby2", "install_bosh_init",
+                "install_bosh_cli", "install_bosh_manifest",
+                "install_cf_staff", "deploy_bosh", "render_cf_manifest",
+                "upload_stemcell", "upload_cf_release", "deploy_cf",
+                "install_diego"
+              ],
+              "update_jumpbox": [
+                "install_cfn_hup", "render_cf_manifest"
+              ]
+            },
+
+            "install_bosh_cli" : {
+
+              "packages" : {
+                "apt" : {
+                  "build-essential" : [], "libxslt1-dev" : [], "libpq-dev" : [],
+                  "libmysqlclient-dev": [], "libxml2-dev" : [], "libsqlite3-dev" : []
+                }
+              },
+
+              "commands" : {
+                "01_install_gem" : {
+                  "command" : "gem install bosh_cli --no-ri --no-rdoc"
+                }
+              }
+            },
+
+            "install_bosh_init" : {
+
+              "packages" : {
+                "apt" : {
+                  "build-essential" : [], "zlibc" : [], "zlib1g-dev" : [],
+                  "ruby-dev" : [], "openssl" : [],
+                  "libxslt-dev" : [], "libxml2-dev" : [], "libssl-dev" : [],
+                  "libreadline6" : [], "libreadline6-dev" : [], "libyaml-dev" : [],
+                  "libsqlite3-dev" : [], "sqlite3" : [], "git" : []
+                }
+              },
+
+              "files" : {
+                "/usr/local/bin/bosh-init" : {
+                  "source" : "https://s3.amazonaws.com/bosh-init-artifacts/bosh-init-0.0.73-linux-amd64",
+                  "mode"    : "000755",
+                  "owner"   : "root",
+                  "group"   : "root"
+                }
+              }
+            },
+
+            "deploy_bosh": {
+              "commands" : {
+                "01_touch_log" : {
+                  "command" : "touch /var/log/bosh.log"
+                },
+
+                "02_touch_log" : {
+                  "command" : "chown ubuntu: /var/log/bosh.log"
+                },
+
+                "03_deploy_bosh" : {
+                  "command" : "su ubuntu -c \"bosh-init deploy micro.yml>>/var/log/bosh.log\"",
+                  "cwd": "/home/ubuntu/my-bosh"
+                }
+              }
+            },
+
+            "render_cf_manifest": {
+              "commands" : {
+                "04_target_bosh" : {
+                  "command" : { "Fn::Join" : ["", ["su ubuntu -c \"bosh -n target ", { "Ref":"boshEIP" }, " microbosh >>/var/log/bosh.log\""]] },
+                  "cwd": "/home/ubuntu/my-bosh",
+                  "env" : { "HOME" : "/home/ubuntu" }
+                },
+
+                "05_bosh_login" : {
+                  "command" : "su ubuntu -c \"bosh login admin admin >>/var/log/bosh.log\"",
+                  "cwd": "/home/ubuntu/my-bosh",
+                  "env" : { "HOME" : "/home/ubuntu" }
+                },
+
+                "06_render_manifest" : {
+                  "command" : "su ubuntu -c \"sed -i -e \"s/REPLACE_WITH_DIRECTOR_ID/$(bosh status --uuid)/\" /home/ubuntu/cf/manifest/cf.yml\"",
+                  "env" : { "HOME" : "/home/ubuntu" }
+                }
+              }
+            },
+
+            "upload_stemcell": {
+              "commands" : {
+                "07_bosh_upload_stemcell" : {
+                  "command" : {"Fn::Join": [ "", [ "su ubuntu -c \"bosh upload stemcell https://bosh-jenkins-artifacts.s3.amazonaws.com/bosh-stemcell/aws/light-bosh-stemcell-", { "Fn::FindInMap" : [ "CfReleasesMap", { "Ref" : "cfRelease" }, "stemcell"] } ,"-aws-xen-hvm-ubuntu-trusty-go_agent.tgz >>/var/log/bosh.log\""]]},
+                  "env" : { "HOME" : "/home/ubuntu" }
+                }
+              }
+            },
+
+            "upload_cf_release": {
+              "commands" : {
+                "08_upload_release" : {
+                  "command" : {"Fn::Join": [ "", [ "su ubuntu -c \"bosh upload release https://s3.amazonaws.com/altoros-cf-releases/cf-", { "Ref": "cfRelease" }, ".tgz >>/var/log/bosh.log\""]]},
+                  "env" : { "HOME" : "/home/ubuntu" }
+                }
+              }
+            },
+            "deploy_cf": {
+              "commands" : {
+                "09_bosh_deployment" : {
+                  "command" :  "su ubuntu -c \"bosh deployment /home/ubuntu/cf/manifest/cf.yml >>/var/log/bosh.log\"",
+                  "env" : { "HOME" : "/home/ubuntu" }
+                },
+
+                "10_bosh_deploy" : {
+                  "command" : "su ubuntu -c \"bosh -n deploy>>/var/log/bosh.log\"",
+                  "env" : { "HOME" : "/home/ubuntu" }
+                }
+
+              }
+
+            },
+
+            "install_diego": {
+              "files": {
+                "/home/ubuntu/diego/manifest/diego.yml" : {
+                  "source": { "Fn::Join" : ["", ["https://s3.amazonaws.com/", { "Ref":"bucketName" }, "/diego/diego-", { "Fn::FindInMap" : [ "CfReleasesMap", { "Ref" : "cfRelease" }, "diego"]}, ".yml"]] },
+                  "context" : {
+                     "secret" : { "Ref" : "sectret" },
+                     "private_subnet_id" : { "Ref" : "CFSubnetid" },
+                     "availability_zone": { "Ref" : "boshAZ" },
+                     "system_domain": { "Fn::Join" : ["", [ { "Ref":"CFEIP" }, ".xip.io"]] }
+                  },
+                  "mode" : "000644",
+                  "owner"   : "ubuntu",
+                  "group"   : "ubuntu",
+                  "authentication":"S3AccessCreds"
+                }
+              },
+              "commands" : {
+                "01_upload_diego_release" : {
+                  "command" : {"Fn::Join": [ "", [ "su ubuntu -c \"bosh upload release https://s3.amazonaws.com/altoros-cf-releases/diego-", { "Fn::FindInMap" : [ "CfReleasesMap", { "Ref" : "cfRelease" }, "diego"]}, ".tgz >>/var/log/bosh.log\""]]},
+                  "env" : { "HOME" : "/home/ubuntu" }
+                },
+                "02_upload_garden_linux_release" : {
+                  "command" : {"Fn::Join": [ "", [ "su ubuntu -c \"bosh upload release https://s3.amazonaws.com/altoros-cf-releases/garden-linux-", { "Fn::FindInMap" : [ "CfReleasesMap", { "Ref" : "cfRelease" }, "gardenLinux"]}, ".tgz >>/var/log/bosh.log\""]]},
+                  "env" : { "HOME" : "/home/ubuntu" }
+                },
+
+                "03_touch_log" : {
+                  "command" : "chown -R ubuntu: /home/ubuntu"
+                },
+
+                "04_render_manifest" : {
+                  "command" : "su ubuntu -c \"sed -i -e \"s/REPLACE_WITH_DIRECTOR_ID/$(bosh status --uuid)/\" /home/ubuntu/diego/manifest/diego.yml\"",
+                  "env" : { "HOME" : "/home/ubuntu" }
+                },
+
+                "05_bosh_deployment" : {
+                  "command" :  "su ubuntu -c \"bosh deployment /home/ubuntu/diego/manifest/diego.yml >>/var/log/bosh.log\"",
+                  "env" : { "HOME" : "/home/ubuntu" }
+                },
+
+                "06_bosh_deploy" : {
+                  "command" : "su ubuntu -c \"bosh -n deploy>>/var/log/bosh.log\"",
+                  "env" : { "HOME" : "/home/ubuntu" }
+                }
+
+              }
+            },
+
+            "install_cf_staff": {
+              "files": {
+                "/home/ubuntu/cf/manifest/cf.yml" : {
+                  "source": { "Fn::Join" : ["", ["https://s3.amazonaws.com/", { "Ref":"bucketName" }, "/cf/cf-", { "Ref":"cfRelease" }, ".yml"]] },
+                  "context" : {
+                     "private_subnet_id" : { "Ref" : "CFSubnetid" },
+                     "public_subnet_id" : { "Ref" : "boshSubnetid" },
+                     "public_sg_id" : { "Ref" : "jumpBoxSGId" },
+                     "bosh_sg_id" : { "Ref" : "boshSGId" },
+                     "availability_zone": { "Ref" : "boshAZ" },
+                     "eip": { "Ref" : "CFEIP" },
+                     "system_domain": { "Fn::Join" : ["", [ { "Ref":"CFEIP" }, ".xip.io"]] }
+                  },
+                  "mode" : "000644",
+                  "owner"   : "ubuntu",
+                  "group"   : "ubuntu",
+                  "authentication":"S3AccessCreds"
+                },
+
+                "/home/ubuntu/scripts/destoy_all.sh" : {
+                  "content" : { "Fn::Join" : ["", [
+                    "#!/bin/bash\n",
+                    "bosh -n delete deployment diego\n",
+                    "bosh -n delete deployment cf\n",
+                    "bosh-init delete /home/ubuntu/my-bosh/micro.yml\n"
+                  ]]},
+                  "mode" : "000755",
+                  "owner"   : "ubuntu",
+                  "group"   : "ubuntu",
+                  "authentication":"S3AccessCreds"
+                },
+
+                "/home/ubuntu/cf/cf-cli_amd64.deb": {
+                  "source": "https://cli.run.pivotal.io/stable?release=debian64&version=6.12.4&source=github-rel",
+                  "mode" : "000644"
+                }
+
+              },
+
+              "commands" : {
+                "01_chown" : { "command" : "chown -R ubuntu: /home/ubuntu/cf" },
+                "02_install_cf_cli" : { "command" : "dpkg -i /home/ubuntu/cf/cf-cli_amd64.deb" }
+              }
+            },
+
+            "install_ruby2" : {
+              "packages" : {
+                "apt" : {
+                  "build-essential" : [], "zlib1g-dev" : [],
+                  "libssl-dev" : [], "libreadline6-dev" : [], "libyaml-dev" : []
+                }
+              },
+
+              "commands" : {
+                "01_get_ruby" : {
+                  "command" : "wget -O ruby-2.2.3.tar.gz https://cache.ruby-lang.org/pub/ruby/2.2/ruby-2.2.3.tar.gz",
+                  "cwd": "/tmp"
+                },
+
+                "02_unpack_ruby2" : {
+                  "command" : "tar -xvzf ruby-2.2.3.tar.gz",
+                  "cwd": "/tmp"
+                },
+
+                "03_install_ruby2" : {
+                  "command" : "./configure --prefix=/usr/local && make && make install",
+                  "cwd": "/tmp/ruby-2.2.3"
+                }
+              }
+            },
+
+            "install_bosh_manifest": {
+              "files" : {
+
+                "/home/ubuntu/my-bosh/bosh.pem" : {
+                  "source": { "Fn::Join" : ["", ["https://s3.amazonaws.com/", { "Ref":"bucketName" }, "/bosh.pem"]] },
+                  "mode"    : "000400",
+                  "authentication":"S3AccessCreds"
+                },
+
+                "/home/ubuntu/my-bosh/micro.yml" : {
+                  "source": { "Fn::Join" : ["", ["https://s3.amazonaws.com/", { "Ref":"bucketName" }, "/bosh/micro-", { "Fn::FindInMap" : [ "CfReleasesMap", { "Ref" : "cfRelease" }, "bosh"]}, ".yml"]] },
+                  "context" : {
+                    "boshaz": { "Ref" : "boshAZ" },
+                    "boshSubnetid": { "Ref" : "boshSubnetid" },
+                    "boshEIP": { "Ref" : "boshEIP" },
+                    "awsAccessKeyId": { "Ref" : "awsAccessKeyId" },
+                    "awsSecretAccessKey": { "Ref" : "awsSecretAccessKey" },
+                    "KeyName": { "Ref" : "KeyName" },
+                    "boshSGId": { "Ref" : "boshSGId" },
+                    "awsregion": { "Ref" : "AWS::Region" },
+                    "boshEIP": { "Ref" : "boshEIP" }
+                  },
+                  "mode" : "000644",
+                  "authentication":"S3AccessCreds"
+                }
+
+              },
+
+              "commands" : {
+                "01_chown_folder" : {
+                  "command" : "chown -R ubuntu: /home/ubuntu/my-bosh"
+                }
+              }
+
+            },
+
+              "install_cfn_hup" : {
+                "files" : {
+                  "/etc/cfn/cfn-hup.conf" : {
+                    "content" : { "Fn::Join" : ["", [
+                      "[main]\n",
+                      "stack=", { "Ref" : "AWS::StackId" }, "\n",
+                      "region=", { "Ref" : "AWS::Region" }, "\n"
+                    ]]},
+                    "mode"    : "000644",
+                    "owner"   : "ubuntu",
+                    "group"   : "ubuntu"
+                  },
+
+                "/etc/cfn/hooks.d/cfn-auto-reloader.conf" : {
+                  "content": { "Fn::Join" : ["", [
+                    "[cfn-auto-reloader-hook]\n",
+                    "triggers=post.update\n",
+                    "path=Resources.jumpbox.Metadata.AWS::CloudFormation::Init\n",
+                    "action=/usr/local/bin/cfn-init -v ",
+                    "         --stack ", { "Ref" : "AWS::StackName" },
+                    "         --resource jumpbox",
+                    "         --configsets update_jumpbox",
+                    "         --region ", { "Ref" : "AWS::Region" }, "\n",
+                    "runas=root\n"
+                  ]]}
+                }
+              },
+
+                "services" : {
+                  "sysvinit" : {
+                    "cfn-hup" : { "enabled" : "true", "ensureRunning" : "true",
+                    "files" : ["/etc/cfn/cfn-hup.conf", "/etc/cfn/hooks.d/cfn-auto-reloader.conf"]}
+                  }
+                }
+              }
+          }
+        },
+
+        "CreationPolicy": {
+          "ResourceSignal": {
+            "Timeout": "PT2H"
+          }
+
+        },
+
+        "Properties" : {
+          "InstanceType" : "t2.small",
+          "IamInstanceProfile":{ "Ref": "InstanceProfile" },
+          "KeyName"  : { "Ref" : "KeyName" },
+          "SourceDestCheck" : "false",
+          "ImageId" : { "Fn::FindInMap" : [ "NatRegionMap", { "Ref" : "AWS::Region" }, "AMI" ]},
+          "NetworkInterfaces" : [{
+            "GroupSet"                 : [{ "Ref" : "jumpBoxSGId" }],
+            "AssociatePublicIpAddress" : "true",
+            "DeviceIndex"              : "0",
+            "DeleteOnTermination"      : "true",
+            "SubnetId"                 : { "Ref" : "boshSubnetid" }
+          }],
+          "Tags" : [
+            { "Key" : "Name", "Value" : "bosh jumpbox" }
+          ],
+          "UserData" : { "Fn::Base64" : { "Fn::Join" : ["", [
+               "#!/bin/bash -xe\n",
+               "function error_exit\n",
+               "{\n",
+               "  cfn-signal --exit-code 1 --stack ", { "Ref" : "AWS::StackName" }, " --resource jumpbox --region ", { "Ref" : "AWS::Region" }, "\n",
+               "  exit 1\n",
+               "}\n",
+               "apt-get -y update\n",
+               "apt-get -y install python-setuptools\n",
+               "easy_install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-1.4-8.tar.gz\n",
+               "cp /usr/local/lib/python2.7/dist-packages/aws_cfn_bootstrap-1.4-py2.7.egg/init/ubuntu/cfn-hup /etc/init.d/cfn-hup\n",
+               "chmod +x /etc/init.d/cfn-hup\n",
+               "update-rc.d cfn-hup defaults\n",
+               "# Install the files and packages from the metadata\n",
+               "/usr/local/bin/cfn-init -v ",
+               "         --stack ", { "Ref" : "AWS::StackName" },
+               "         --resource jumpbox ",
+               "         --configsets install_jumpbox ",
+               "         --region ", { "Ref" : "AWS::Region" },
+               "|| error_exit\n",
+               "# If all went well, signal success\n",
+               "cfn-signal --exit-code $? --stack ", { "Ref" : "AWS::StackName" }, " --resource jumpbox --region ", { "Ref" : "AWS::Region" }, "\n"
+  		      ]]}}
+        }
+      }
+
+    },
+
+    "Outputs": {
+      "JumpBoxPublicIp": {
+        "Description": "Public IP address of JumpBox instance",
+        "Value": { "Fn::GetAtt" : [ "jumpbox" , "PublicIp" ] }
+      },
+
+      "BoshPublicIp": {
+        "Description": "Public IP address of BOSH instance",
+        "Value": { "Ref": "boshEIP" }
+      },
+
+      "CFPublicIp": {
+        "Description": "Public IP address of CF load balancer",
+        "Value": { "Fn::Join" : ["", ["api.", { "Ref": "CFEIP" }, ".xip.io"]]}
+      }
+    }
+}

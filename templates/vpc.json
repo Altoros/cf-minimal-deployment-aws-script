@@ -1,0 +1,96 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+
+  "Description": "AWS CloudFormation Template for VPC.",
+
+  "Parameters": {
+    "EnvironmentName": {
+      "Description": "Name of environment to create",
+      "Type": "String",
+      "Default": "development"
+    }
+  },
+
+  "Resources": {
+
+    "vpc": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": "10.0.0.0/16",
+        "EnableDnsSupport": "true",
+        "EnableDnsHostnames": "true",
+        "Tags": [ { "Key": "Name", "Value": { "Ref": "EnvironmentName" } } ]
+      }
+    },
+
+    "InternetGateway": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Properties": {
+        "Tags": [ { "Key": "Name", "Value": { "Ref": "EnvironmentName" } } ]
+      }
+    },
+
+    "AttachGateway": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {
+        "VpcId": { "Ref": "vpc" },
+        "InternetGatewayId": { "Ref": "InternetGateway"  }
+      }
+    },
+
+    "RouteTable" : {
+      "Type" : "AWS::EC2::RouteTable",
+      "Properties" : {
+          "VpcId" : { "Ref" : "vpc" },
+          "Tags": [ { "Key": "Name", "Value": { "Ref": "EnvironmentName" } } ]
+      }
+    },
+
+    "myRoute" : {
+      "Type" : "AWS::EC2::Route",
+      "DependsOn" : "InternetGateway",
+      "Properties" : {
+        "RouteTableId" : { "Ref" : "RouteTable" },
+        "DestinationCidrBlock" : "0.0.0.0/0",
+        "GatewayId" : { "Ref" : "InternetGateway" }
+      }
+    },
+
+    "boshSubnet": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "AvailabilityZone": "us-east-1d",
+        "CidrBlock": "10.0.0.0/24",
+        "VpcId": { "Ref": "vpc" },
+        "Tags": [{ "Key": "Name", "Value": "Public subnet" }]
+      }
+    },
+
+    "SubnetRouteTableAssociation": {
+      "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+        "Properties" : {
+        "RouteTableId" : { "Ref" : "RouteTable" },
+        "SubnetId" : { "Ref" : "boshSubnet" }
+      }
+    }
+  },
+
+  "Outputs": {
+
+    "vpcid": {
+      "Description": "The VPC ID",
+      "Value": { "Ref": "vpc" }
+    },
+
+    "boshSubnetid": {
+      "Description": "The subnet ID",
+      "Value": { "Ref": "boshSubnet" }
+    },
+
+    "boshAZ": {
+      "Description": "boshAZ",
+      "Value": { "Fn::GetAtt" : [ "boshSubnet", "AvailabilityZone" ]  }
+    }
+
+  }
+}

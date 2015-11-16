@@ -1,0 +1,10 @@
+# Unique name to use with CloudFormation [a-zA-Z][-a-zA-Z0-9]*
+export STACK_NAME=ANY_UNIQUE_NAME
+# Onli supported values are: 221
+export CF_RELEASE=221
+# AWS credentials
+export AWS_ACCESS_KEY_ID="YOUR_KEY"
+export AWS_SECRET_ACCESS_KEY="YOUR_SECRET"
+export AWS_DEFAULT_REGION="us-east-1"
+# secret password to use with CF and Diego
+export SECRET="YOUR_SECRET"

@@ -1,0 +1,120 @@
+{
+    "AWSTemplateFormatVersion" : "2010-09-09",
+
+    "Description": "nat instance",
+
+    "Parameters" : {
+
+      "vpc": {
+        "Description": "Id of VPC",
+        "Type": "AWS::EC2::VPC::Id",
+        "ConstraintDescription": "must be the id of existing VPC."
+      },
+
+      "EnvironmentName": {
+        "Description": "Name of environment to create",
+        "Type": "String",
+        "Default": "development"
+      },
+
+      "KeyName" : {
+        "Description" : "Name of an existing EC2 KeyPair (find or create here: https://console.aws.amazon.com/ec2/v2/home#KeyPairs: )",
+        "Type" : "String",
+        "MinLength": "1",
+        "MaxLength": "64",
+        "AllowedPattern" : "[-_ a-zA-Z0-9]*",
+        "ConstraintDescription" : "can contain only alphanumeric characters, spaces, dashes and underscores.",
+        "Default" : "bosh"
+      },
+
+      "NATSGId" : {
+        "Description": "Id of NAT SG",
+        "Type": "AWS::EC2::SecurityGroup::Id",
+        "ConstraintDescription": "must be the id of existing SG"
+      },
+
+      "boshSubnetid": {
+        "Description": "Id of bosh subnet",
+        "Type": "AWS::EC2::Subnet::Id",
+        "ConstraintDescription": "must be the id of existing subnet."
+      }
+
+    },
+
+    "Mappings" : {
+
+
+      "NatRegionMap" : {
+        "us-east-1"      : { "AMI" : "ami-c02b04a8" }
+      }
+    },
+
+    "Resources" : {
+
+      "CFSubnet": {
+        "Type": "AWS::EC2::Subnet",
+        "Properties": {
+          "CidrBlock": "10.0.16.0/24",
+          "VpcId": { "Ref": "vpc" },
+          "Tags": [ { "Key": "Name", "Value": "CF subnet" } ]
+        }
+      },
+
+      "SubnetRouteTableAssociation": {
+        "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+          "Properties" : {
+          "RouteTableId" : { "Ref" : "NATRouteTable" },
+          "SubnetId" : { "Ref" : "CFSubnet" }
+        }
+      },
+
+      "NATRouteTable" : {
+        "Type" : "AWS::EC2::RouteTable",
+        "Properties" : {
+            "VpcId" : { "Ref" : "vpc" },
+            "Tags": [ { "Key": "Name", "Value": { "Ref": "EnvironmentName" } } ]
+        }
+      },
+
+      "NATRoute" : {
+        "Type" : "AWS::EC2::Route",
+        "DependsOn" : "NAT",
+        "Properties" : {
+          "RouteTableId" : { "Ref" : "NATRouteTable" },
+          "DestinationCidrBlock" : "0.0.0.0/0",
+          "InstanceId" : { "Ref" : "NAT" }
+        }
+      },
+
+
+      "NAT" : {
+        "Type" : "AWS::EC2::Instance",
+        "Metadata" : {
+          "comment" : "amzn-ami-vpc-nat-pv-2014.09.1.x86_64-ebs"
+        },
+
+        "Properties" : {
+          "InstanceType" : "m1.small",
+          "KeyName"  : { "Ref" : "KeyName" },
+          "SourceDestCheck" : "false",
+          "ImageId" : { "Fn::FindInMap" : [ "NatRegionMap", { "Ref" : "AWS::Region" }, "AMI" ]},
+          "NetworkInterfaces" : [{
+            "GroupSet"                 : [{ "Ref" : "NATSGId" }],
+            "AssociatePublicIpAddress" : "true",
+            "DeviceIndex"              : "0",
+            "DeleteOnTermination"      : "true",
+            "SubnetId"                 : { "Ref" : "boshSubnetid" },
+            "PrivateIpAddresses": [{ "Primary": "true", "PrivateIpAddress": "10.0.0.4" }]
+          }],
+          "Tags" : [ { "Key" : "Name", "Value" : "bosh nat" } ]
+        }
+      }
+    },
+
+    "Outputs": {
+      "CFSubnetid": {
+        "Description": "The CF subnet ID",
+        "Value": { "Ref": "CFSubnet" }
+      }
+    }
+}

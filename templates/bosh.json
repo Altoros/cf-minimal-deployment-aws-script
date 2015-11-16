@@ -1,0 +1,164 @@
+{
+    "AWSTemplateFormatVersion" : "2010-09-09",
+
+    "Description": "AWS CloudFormation Template to bootstrap BOSH to VPC",
+
+    "Parameters" : {
+      "EnvironmentName" : {
+        "Description" : "Name of environment to create",
+        "Type" : "String",
+        "Default": "test"
+      },
+
+      "bucketName" : {
+        "Description" : "Name of bucket to use",
+        "Type" : "String"
+      },
+
+      "deployDiego" : {
+        "Description" : "To deploy Diego or not",
+        "Type" : "String",
+        "Default": "yes"
+      },
+
+      "awsAccessKeyId" : {
+        "Description" : "AWS_ACCESS_KEY_ID to use with bosh-init",
+        "Type" : "String",
+        "NoEcho": "true"
+      },
+
+      "awsSecretAccessKey" : {
+        "Description" : "AWS_SECRET_ACCESS_KEY to use with bosh-init",
+        "Type" : "String",
+        "NoEcho": "true"
+      },
+
+      "KeyName" : {
+        "Description" : "Name of an existing EC2 KeyPair (find or create here: https://console.aws.amazon.com/ec2/v2/home#KeyPairs: )",
+        "Type" : "String",
+        "MinLength": "1",
+        "MaxLength": "64",
+        "AllowedPattern" : "[-_ a-zA-Z0-9]*",
+        "ConstraintDescription" : "can contain only alphanumeric characters, spaces, dashes and underscores."
+      },
+
+      "jbrelease" : {
+        "Description" : "The way to control update",
+        "Type" : "String",
+        "Default" : "1"
+      },
+
+      "cfRelease" : {
+        "Description" : "Number of release to use",
+        "Type" : "String"
+      },
+
+      "secret" : {
+        "Description" : "Password",
+        "Type" : "String",
+        "NoEcho": "true"
+      }
+
+    },
+
+    "Resources" : {
+
+      "vpc" : {
+	       "Type" : "AWS::CloudFormation::Stack",
+
+         "Properties" : {
+	          "TemplateURL" : { "Fn::Join" : ["", ["https://s3.amazonaws.com/", { "Ref":"bucketName" }, "/vpc.json"]] },
+            "TimeoutInMinutes" : "20",
+            "Parameters" : {
+              "EnvironmentName": { "Ref": "EnvironmentName" }
+            }
+
+	       }
+
+      },
+
+      "SecurityGroups" : {
+	       "Type" : "AWS::CloudFormation::Stack",
+
+         "Properties" : {
+	          "TemplateURL" : { "Fn::Join" : ["", ["https://s3.amazonaws.com/", { "Ref":"bucketName" }, "/security-groups.json"]] },
+            "TimeoutInMinutes" : "20",
+
+            "Parameters" : {
+              "vpcid": { "Fn::GetAtt" : [ "vpc", "Outputs.vpcid" ] }
+            }
+
+	       },
+
+         "DependsOn" : "vpc"
+
+      },
+
+      "jumpBox" : {
+         "Type" : "AWS::CloudFormation::Stack",
+
+         "Properties" : {
+            "TemplateURL" : { "Fn::Join" : ["", ["https://s3.amazonaws.com/", { "Ref":"bucketName" }, "/jumpbox.json"]] },
+            "TimeoutInMinutes" : "60",
+
+            "Parameters" : {
+              "jumpBoxSGId": { "Fn::GetAtt" : [ "SecurityGroups", "Outputs.jumpBoxSGId" ] },
+              "boshSGId": { "Fn::GetAtt" : [ "SecurityGroups", "Outputs.boshSGId" ] },
+              "CFSubnetid": { "Fn::GetAtt" : [ "nat", "Outputs.CFSubnetid" ] },
+              "boshSubnetid": { "Fn::GetAtt" : [ "vpc", "Outputs.boshSubnetid" ] },
+              "boshAZ": { "Fn::GetAtt" : [ "vpc", "Outputs.boshAZ" ] },
+              "KeyName": { "Ref": "KeyName" },
+              "deployDiego": { "Ref": "deployDiego" },
+              "awsAccessKeyId": { "Ref": "awsAccessKeyId" },
+              "awsSecretAccessKey": { "Ref": "awsSecretAccessKey" },
+              "bucketName": { "Ref": "bucketName" },
+              "jbrelease": { "Ref": "jbrelease" },
+              "cfRelease": { "Ref": "cfRelease" },
+              "secret": { "Ref": "secret" }
+            }
+
+         },
+
+         "DependsOn" : [ "vpc", "SecurityGroups", "nat" ]
+
+      },
+
+      "nat" : {
+         "Type" : "AWS::CloudFormation::Stack",
+
+         "Properties" : {
+            "TemplateURL" : { "Fn::Join" : ["", ["https://s3.amazonaws.com/", { "Ref":"bucketName" }, "/nat.json"]] },
+            "TimeoutInMinutes" : "20",
+
+            "Parameters" : {
+              "NATSGId": { "Fn::GetAtt" : [ "SecurityGroups", "Outputs.NATSGId" ] },
+              "boshSubnetid": { "Fn::GetAtt" : [ "vpc", "Outputs.boshSubnetid" ] },
+              "KeyName": { "Ref": "KeyName" },
+              "vpc": { "Fn::GetAtt" : [ "vpc", "Outputs.vpcid" ] },
+              "EnvironmentName": { "Ref": "EnvironmentName" }
+            }
+
+         },
+
+         "DependsOn" : [ "vpc", "SecurityGroups" ]
+
+      }
+
+    },
+
+    "Outputs": {
+      "JumpBoxPublicIp": {
+        "Description": "Public IP address of JumpBox instance",
+        "Value": { "Fn::GetAtt" : [  "jumpBox", "Outputs.JumpBoxPublicIp" ] }
+      },
+      "BOSHPublicIp": {
+        "Description": "Public IP address of BOSH instance",
+        "Value": { "Fn::GetAtt" : [  "jumpBox", "Outputs.BoshPublicIp" ] }
+      },
+
+      "CFAPIEndpoint": {
+        "Description": "Public IP address of BOSH instance",
+        "Value": { "Fn::GetAtt" : [  "jumpBox", "Outputs.CFPublicIp" ] }
+      }
+    }
+}
