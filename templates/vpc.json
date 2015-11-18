@@ -48,7 +48,7 @@
 
     "myRoute" : {
       "Type" : "AWS::EC2::Route",
-      "DependsOn" : "InternetGateway",
+      "DependsOn" : "AttachGateway",
       "Properties" : {
         "RouteTableId" : { "Ref" : "RouteTable" },
         "DestinationCidrBlock" : "0.0.0.0/0",
