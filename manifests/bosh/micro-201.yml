@@ -65,17 +65,17 @@ jobs:
     nats:
       address: 127.0.0.1
       user: nats
-      password: nats-password
+      password: nats-{{ secret }}
 
     redis:
       listen_addresss: 127.0.0.1
       address: 127.0.0.1
-      password: redis-password
+      password: redis-{{ secret }}
 
     postgres: &db
       host: 127.0.0.1
       user: postgres
-      password: postgres-password
+      password: postgres-{{ secret }}
       database: bosh
       adapter: postgres
 
@@ -83,17 +83,17 @@ jobs:
       address: 10.0.0.6
       host: 10.0.0.6
       db: *db
-      http: {user: admin, password: admin, port: 25777}
+      http: {user: admin, password: {{ secret }}, port: 25777}
       username: admin
-      password: admin
+      password: {{ secret }}
       port: 25777
 
     blobstore:
       address: 10.0.0.6
       port: 25250
       provider: dav
-      director: {user: director, password: director-password}
-      agent: {user: agent, password: agent-password}
+      director: {user: director, password: director-{{ secret }}}
+      agent: {user: agent, password: agent-{{ secret }}}
 
     director:
       address: 127.0.0.1
@@ -102,9 +102,14 @@ jobs:
       cpi_job: cpi
       max_threads: 10
       ignore_missing_gateway: []
+      user_management:
+        provider: local
+        local:
+          users:
+          - {name: admin, password: {{ secret }} }
 
     hm:
-      director_account: {user: admin, password: admin}
+      director_account: {user: admin, password: {{ secret }}}
       resurrector_enabled: true
 
     aws: &aws
@@ -114,7 +119,7 @@ jobs:
       default_security_groups: [{{ boshSGId }}]
       region: {{ awsregion }}
 
-    agent: {mbus: "nats://nats:nats-password@10.0.0.6:4222"}
+    agent: {mbus: "nats://nats:nats-{{ secret }}@10.0.0.6:4222"}
 
     ntp: &ntp [0.pool.ntp.org, 1.pool.ntp.org]
 
@@ -127,10 +132,10 @@ cloud_provider:
     user: vcap
     private_key: ./bosh.pem # Path relative to this manifest file
 
-  mbus: "https://mbus:mbus-password@{{ boshEIP }}:6868" # <--- Replace with Elastic IP
+  mbus: "https://mbus:mbus-{{ secret }}@{{ boshEIP }}:6868" # <--- Replace with Elastic IP
 
   properties:
     aws: *aws
-    agent: {mbus: "https://mbus:mbus-password@0.0.0.0:6868"}
+    agent: {mbus: "https://mbus:mbus-{{ secret }}@0.0.0.0:6868"}
     blobstore: {provider: local, path: /var/vcap/micro_bosh/data/cache}
     ntp: *ntp

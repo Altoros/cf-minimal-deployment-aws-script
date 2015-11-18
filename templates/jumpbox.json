@@ -239,7 +239,7 @@
                 },
 
                 "05_bosh_login" : {
-                  "command" : "su ubuntu -c \"bosh login admin admin >>/var/log/bosh.log\"",
+                  "command" : { "Fn::Join" : ["", ["su ubuntu -c \"bosh login admin ", { "Ref":"secret" }, " >>/var/log/bosh.log\"" ]] },
                   "cwd": "/home/ubuntu/my-bosh",
                   "env" : { "HOME" : "/home/ubuntu" }
                 },
@@ -434,7 +434,8 @@
                     "KeyName": { "Ref" : "KeyName" },
                     "boshSGId": { "Ref" : "boshSGId" },
                     "awsregion": { "Ref" : "AWS::Region" },
-                    "boshEIP": { "Ref" : "boshEIP" }
+                    "boshEIP": { "Ref" : "boshEIP" },
+                    "secret": { "Ref" : "secret" }
                   },
                   "mode" : "000644",
                   "authentication":"S3AccessCreds"
