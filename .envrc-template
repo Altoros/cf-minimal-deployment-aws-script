@@ -1,6 +1,6 @@
 # Unique name to use with CloudFormation [a-zA-Z][-a-zA-Z0-9]*
 export STACK_NAME=ANY_UNIQUE_NAME
-# Onli supported values are: 221
+# 221 is currently the only supported version
 export CF_RELEASE=221
 # AWS credentials
 export AWS_ACCESS_KEY_ID="YOUR_KEY"
